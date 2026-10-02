@@ -1,0 +1,18 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: CI/CD workshop - event-driven order processing
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]      # the lab host is ARM, so sam local runs the ARM image natively
+    Timeout: 10
+    MemorySize: 256
+
+Resources:
+  OrderApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cicd-workshop-order-api
+      CodeUri: ./src/order-api/
+      Handler: index.handler
