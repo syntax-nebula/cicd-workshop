@@ -59,6 +59,9 @@ Resources:
       FunctionName: cicd-workshop-order-api
       CodeUri: ./src/order-api/
       Handler: index.handler
+      Environment:
+        Variables:
+          PAYMENT_API_KEY: sk_test_FAKE_DO_NOT_USE_51H8xQe2eZvKYlo
       Policies:
         - DynamoDBWritePolicy:
             TableName: !Ref OrdersTable
