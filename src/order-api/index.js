@@ -4,8 +4,8 @@ export function calculateTotal(items) {
 
 export function validateOrder(order) {
   const errors = [];
-  if (!order.items?.length) errors.push('Order must contain items');
-  if (calculateTotal(order.items ?? []) <= 0) errors.push('Total must be positive');
+  if (!Array.isArray(order.items) || order.items.length === 0) errors.push('Order must contain items');
+  if (calculateTotal(Array.isArray(order.items) ? order.items : []) <= 0) errors.push('Total must be positive');
   return { valid: errors.length === 0, errors };
 }
 
@@ -22,5 +22,5 @@ export const handler = async (event) => {
 };
 
 export function isHighValue(order) {
-  return calculateTotal(order.items ?? []) > 1000;
+  return calculateTotal(Array.isArray(order.items) ? order.items : []) > 1000;
 }
