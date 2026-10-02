@@ -1,0 +1,43 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+      python: 3.12
+    commands:
+      - pip install --quiet cfn-lint checkov
+      - npm ci
+
+  pre_build:
+    commands:
+      # Cheapest checks first — fail fast.
+      - echo "--- dependency audit ---"
+      - npm audit --audit-level=high
+      - echo "--- template validity ---"
+      - cfn-lint template.yaml
+      - echo "--- policy scan ---"
+      - checkov -f template.yaml --framework cloudformation --compact
+
+  build:
+    commands:
+      - echo "--- unit tests ---"
+      - npm test -- test/unit --coverage --collectCoverageFrom='src/**/*.js'
+      - echo "--- package ---"
+      - sam build
+
+  post_build:
+    commands:
+      - sam package --s3-bucket "$ARTIFACT_BUCKET" --output-template-file packaged.yaml
+
+artifacts:
+  files:
+    - packaged.yaml
+    - template.yaml
+    - test/**/*
+    - package.json
+    - package-lock.json
+
+cache:
+  paths:
+    - '/root/.npm/**/*'      # npm's download cache; npm ci deletes node_modules anyway
