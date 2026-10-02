@@ -7,17 +7,84 @@ Globals:
     Runtime: nodejs22.x
     Architectures: [arm64]      # the lab host is ARM, so sam local runs the ARM image natively
     Timeout: 30
-    MemorySize: 512
+    MemorySize: 256
+    Environment:
+      Variables:
+        ORDERS_TABLE: !Ref OrdersTable
+        EVENT_BUS_NAME: !Ref EventBus
 
 Resources:
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cicd-workshop-orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: orderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: orderId
+          KeyType: HASH
+
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: cicd-workshop-bus
+
+  ShippingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: cicd-workshop-shipping
+      VisibilityTimeout: 60
+
   OrderApiFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: cicd-workshop-order-api
       CodeUri: ./src/order-api/
       Handler: index.handler
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref OrdersTable
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref EventBus
+      Events:
+        PostOrder:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: post
 
-  EventBus:
-    Type: AWS::Events::EventBus
+  FulfilmentFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      Name: cicd-workshop-bus
+      FunctionName: cicd-workshop-fulfilment
+      CodeUri: ./src/fulfilment/
+      Handler: index.handler
+      Environment:
+        Variables:
+          SHIPPING_QUEUE_URL: !Ref ShippingQueue
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt ShippingQueue.QueueName
+      Events:
+        OrderPlaced:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref EventBus
+            Pattern:
+              source:
+                - cicd-workshop.orders
+              detail-type:
+                - OrderPlaced
+
+Outputs:
+  ApiUrl:
+    Description: Order API endpoint
+    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod'
+  ShippingQueueUrl:
+    Description: Shipping queue URL
+    Value: !Ref ShippingQueue
+  EventBusName:
+    Description: Event bus name
+    Value: !Ref EventBus
