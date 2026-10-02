@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getPaymentSecret } from './secrets.js';
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 
@@ -30,6 +31,10 @@ export const handler = async (event) => {
   if (!valid) {
     return { statusCode: 400, body: JSON.stringify({ errors }) };
   }
+
+  // Resolve the credential at runtime. Never log it.
+  const { endpoint } = await getPaymentSecret();
+  console.log(JSON.stringify({ msg: 'payment endpoint resolved', endpoint }));
 
   const orderId = randomUUID();
   const total = calculateTotal(order.items);

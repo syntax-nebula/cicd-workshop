@@ -1,16 +1,24 @@
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { _resetCacheForTests } from '../../src/order-api/secrets.js';
 import { handler } from '../../src/order-api/index.js';
 
 const ddbMock = mockClient(DynamoDBClient);
 const ebMock = mockClient(EventBridgeClient);
+const smMock = mockClient(SecretsManagerClient);
 
 const apiEvent = (body) => ({ body: JSON.stringify(body) });
 
 beforeEach(() => {
   ddbMock.reset();
   ebMock.reset();
+  smMock.reset();
+  _resetCacheForTests();
+  smMock.on(GetSecretValueCommand).resolves({
+    SecretString: JSON.stringify({ apiKey: 'k', endpoint: 'https://e.invalid' }),
+  });
   process.env.ORDERS_TABLE = 'cicd-workshop-orders';
   process.env.EVENT_BUS_NAME = 'cicd-workshop-bus';
 });
