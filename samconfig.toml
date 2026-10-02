@@ -1,0 +1,25 @@
+version = 0.1
+
+[dev.deploy.parameters]
+stack_name = "cicd-workshop-dev"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+region = "eu-central-1"
+confirm_changeset = false
+parameter_overrides = "Environment=dev LogLevel=DEBUG"
+
+[staging.deploy.parameters]
+stack_name = "cicd-workshop-staging"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+region = "eu-central-1"
+confirm_changeset = false
+parameter_overrides = "Environment=staging LogLevel=INFO"
+
+[prod.deploy.parameters]
+stack_name = "cicd-workshop-prod"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+region = "eu-central-1"
+confirm_changeset = false
+parameter_overrides = "Environment=prod LogLevel=WARN"
