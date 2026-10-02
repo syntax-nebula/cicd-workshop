@@ -1,0 +1,17 @@
+# Checkov decisions for the whole application, each with its reason.
+# Suppressions for a single resource stay in template.yaml, next to that resource.
+skip-check:
+  # SQS encrypts queues at rest by default with SQS-managed keys (SSE-SQS);
+  # this check only accepts a KMS key.
+  - CKV_AWS_27
+  # Reserved concurrency takes capacity from the account's shared limit.
+  # Set it per function once real load shows it is needed.
+  - CKV_AWS_115
+  # The functions only call AWS service endpoints. A VPC would add cold-start
+  # latency and NAT gateway cost, with no private resource to reach.
+  - CKV_AWS_117
+  # Data at rest is encrypted with AWS managed keys. Customer managed KMS keys
+  # are a cost and key-management decision this application does not need yet.
+  - CKV_AWS_119   # DynamoDB table
+  - CKV_AWS_158   # CloudWatch log groups, added in Lab 5
+  - CKV_AWS_173   # Lambda environment variables

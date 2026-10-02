@@ -19,6 +19,8 @@ Resources:
     Properties:
       TableName: cicd-workshop-orders
       BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
       AttributeDefinitions:
         - AttributeName: orderId
           AttributeType: S
@@ -31,6 +33,12 @@ Resources:
     Properties:
       Name: cicd-workshop-bus
 
+  FulfilmentDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: cicd-workshop-fulfilment-dlq
+      MessageRetentionPeriod: 1209600
+
   ShippingQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -39,6 +47,14 @@ Resources:
 
   OrderApiFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_116
+            comment: >-
+              API Gateway invokes this function synchronously and returns any
+              error to the caller. A dead-letter queue only receives failed
+              asynchronous invocations, so it would never get a message.
     Properties:
       FunctionName: cicd-workshop-order-api
       CodeUri: ./src/order-api/
@@ -64,9 +80,14 @@ Resources:
       Environment:
         Variables:
           SHIPPING_QUEUE_URL: !Ref ShippingQueue
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt FulfilmentDLQ.Arn
       Policies:
         - SQSSendMessagePolicy:
             QueueName: !GetAtt ShippingQueue.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt FulfilmentDLQ.QueueName
       Events:
         OrderPlaced:
           Type: EventBridgeRule
