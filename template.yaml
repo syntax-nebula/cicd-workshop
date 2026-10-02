@@ -59,6 +59,9 @@ Resources:
       FunctionName: cicd-workshop-order-api
       CodeUri: ./src/order-api/
       Handler: index.handler
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: AllAtOnce
       Environment:
         Variables:
           PAYMENT_SECRET_ID: cicd-workshop/payment-api
