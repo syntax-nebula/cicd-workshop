@@ -2,22 +2,61 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: CI/CD workshop - event-driven order processing
 
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment. Drives naming and sizing.
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARN, ERROR]
+
+Mappings:
+  EnvConfig:
+    dev:
+      MemorySize: 256
+      LogRetentionDays: 7
+    staging:
+      MemorySize: 512
+      LogRetentionDays: 14
+    prod:
+      MemorySize: 1024
+      LogRetentionDays: 30
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
 Globals:
   Function:
     Runtime: nodejs22.x
     Architectures: [arm64]      # the lab host is ARM, so sam local runs the ARM image natively
     Timeout: 30
-    MemorySize: 256
+    MemorySize: !FindInMap [EnvConfig, !Ref Environment, MemorySize]
     Environment:
       Variables:
         ORDERS_TABLE: !Ref OrdersTable
         EVENT_BUS_NAME: !Ref EventBus
+        ENVIRONMENT: !Ref Environment
+        LOG_LEVEL: !Ref LogLevel
 
 Resources:
+  ProdCanaryConfig:             # prod only: 10% of the traffic for one minute, then all of it
+    Type: AWS::CodeDeploy::DeploymentConfig
+    Condition: IsProd
+    Properties:
+      ComputePlatform: Lambda
+      TrafficRoutingConfig:
+        Type: TimeBasedCanary
+        TimeBasedCanary:
+          CanaryPercentage: 10
+          CanaryInterval: 1
+
   OrdersTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: cicd-workshop-orders
+      TableName: !Sub cicd-workshop-${Environment}-orders
       BillingMode: PAY_PER_REQUEST
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
@@ -31,7 +70,7 @@ Resources:
   EventBus:
     Type: AWS::Events::EventBus
     Properties:
-      Name: cicd-workshop-bus
+      Name: !Sub cicd-workshop-${Environment}-bus
 
   PreTrafficHookFunction:
     Type: AWS::Serverless::Function
@@ -43,7 +82,7 @@ Resources:
               CodeDeploy waits for this hook to report a status. If it fails,
               the deployment fails and rolls back, so there is no event to lose.
     Properties:
-      FunctionName: CodeDeployHook_cicd-workshop-pre-traffic
+      FunctionName: !Sub CodeDeployHook_cicd-workshop-${Environment}-pre-traffic
       CodeUri: ./src/hooks/
       Handler: pre-traffic.handler
       Timeout: 60
@@ -66,7 +105,7 @@ Resources:
   OrderApiErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: cicd-workshop-order-api-errors
+      AlarmName: !Sub cicd-workshop-${Environment}-order-api-errors
       AlarmDescription: Errors on the order API live alias during deployment
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -87,7 +126,7 @@ Resources:
   OrderApiDurationAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: cicd-workshop-order-api-duration
+      AlarmName: !Sub cicd-workshop-${Environment}-order-api-duration
       AlarmDescription: p99 latency on the order API live alias
       Namespace: AWS/Lambda
       MetricName: Duration
@@ -108,13 +147,13 @@ Resources:
   FulfilmentDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: cicd-workshop-fulfilment-dlq
+      QueueName: !Sub cicd-workshop-${Environment}-fulfilment-dlq
       MessageRetentionPeriod: 1209600
 
   ShippingQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: cicd-workshop-shipping
+      QueueName: !Sub cicd-workshop-${Environment}-shipping
       VisibilityTimeout: 60
 
   OrderApiFunction:
@@ -128,12 +167,12 @@ Resources:
               error to the caller. A dead-letter queue only receives failed
               asynchronous invocations, so it would never get a message.
     Properties:
-      FunctionName: cicd-workshop-order-api
+      FunctionName: !Sub cicd-workshop-${Environment}-order-api
       CodeUri: ./src/order-api/
       Handler: index.handler
       AutoPublishAlias: live
       DeploymentPreference:
-        Type: Canary10Percent5Minutes
+        Type: !If [IsProd, !Ref ProdCanaryConfig, AllAtOnce]
         Alarms:
           - !Ref OrderApiErrorAlarm
           - !Ref OrderApiDurationAlarm
@@ -159,7 +198,7 @@ Resources:
   FulfilmentFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: cicd-workshop-fulfilment
+      FunctionName: !Sub cicd-workshop-${Environment}-fulfilment
       CodeUri: ./src/fulfilment/
       Handler: index.handler
       Environment:
@@ -184,7 +223,22 @@ Resources:
               detail-type:
                 - OrderPlaced
 
+  OrderApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/cicd-workshop-${Environment}-order-api'
+      RetentionInDays: !FindInMap [EnvConfig, !Ref Environment, LogRetentionDays]
+
+  FulfilmentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/cicd-workshop-${Environment}-fulfilment'
+      RetentionInDays: !FindInMap [EnvConfig, !Ref Environment, LogRetentionDays]
+
 Outputs:
+  Environment:
+    Description: Deployed environment
+    Value: !Ref Environment
   ApiUrl:
     Description: Order API endpoint
     Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod'
