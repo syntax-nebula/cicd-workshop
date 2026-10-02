@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Minimal secret scan. Real projects should use gitleaks or detect-secrets.
+set -euo pipefail
+
+PATTERNS='(AKIA[0-9A-Z]{16}|sk_(live|test)_[0-9a-zA-Z]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|aws_secret_access_key\s*=)'
+
+# Staged files that still exist (not deleted). With none, there is nothing to scan.
+[ -n "$(git diff --cached --name-only --diff-filter=ACMR)" ] || exit 0
+
+if git diff --cached --name-only --diff-filter=ACMR -z | xargs -0 grep -nEI "$PATTERNS" 2>/dev/null; then
+  echo ""
+  echo "ERROR: a possible secret was found in the staged changes (above)."
+  echo "Remove it and use Secrets Manager or Parameter Store instead."
+  echo "If this is a false positive, commit with --no-verify and explain why in the message."
+  exit 1
+fi
