@@ -33,6 +33,36 @@ Resources:
     Properties:
       Name: cicd-workshop-bus
 
+  PreTrafficHookFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_116
+            comment: >-
+              CodeDeploy waits for this hook to report a status. If it fails,
+              the deployment fails and rolls back, so there is no event to lose.
+    Properties:
+      FunctionName: CodeDeployHook_cicd-workshop-pre-traffic
+      CodeUri: ./src/hooks/
+      Handler: pre-traffic.handler
+      Timeout: 60
+      DeploymentPreference:
+        Enabled: false
+      Environment:
+        Variables:
+          NEW_VERSION_ARN: !Ref OrderApiFunction.Version
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - codedeploy:PutLifecycleEventHookExecutionStatus
+              Resource: !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:*'
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub '${OrderApiFunction.Arn}:*'
+
   OrderApiErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -107,6 +137,8 @@ Resources:
         Alarms:
           - !Ref OrderApiErrorAlarm
           - !Ref OrderApiDurationAlarm
+        Hooks:
+          PreTraffic: !Ref PreTrafficHookFunction
       Environment:
         Variables:
           PAYMENT_SECRET_ID: cicd-workshop/payment-api
