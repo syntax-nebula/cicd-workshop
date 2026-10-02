@@ -33,6 +33,48 @@ Resources:
     Properties:
       Name: cicd-workshop-bus
 
+  OrderApiErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cicd-workshop-order-api-errors
+      AlarmDescription: Errors on the order API live alias during deployment
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref OrderApiFunction
+        - Name: Resource
+          Value: !Sub '${OrderApiFunction}:live'
+        - Name: ExecutedVersion
+          Value: !GetAtt OrderApiFunction.Version.Version
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  OrderApiDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cicd-workshop-order-api-duration
+      AlarmDescription: p99 latency on the order API live alias
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref OrderApiFunction
+        - Name: Resource
+          Value: !Sub '${OrderApiFunction}:live'
+        - Name: ExecutedVersion
+          Value: !GetAtt OrderApiFunction.Version.Version
+      ExtendedStatistic: p99
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 5000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
   FulfilmentDLQ:
     Type: AWS::SQS::Queue
     Properties:
@@ -61,7 +103,10 @@ Resources:
       Handler: index.handler
       AutoPublishAlias: live
       DeploymentPreference:
-        Type: AllAtOnce
+        Type: Canary10Percent5Minutes
+        Alarms:
+          - !Ref OrderApiErrorAlarm
+          - !Ref OrderApiDurationAlarm
       Environment:
         Variables:
           PAYMENT_SECRET_ID: cicd-workshop/payment-api
