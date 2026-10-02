@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0",
-  "customer": "c-123",
+  "schemaVersion": "2.0",
+  "customerId": "c-123",
   "items": [{ "sku": "ABC", "price": 10, "qty": 2 }]
 }
