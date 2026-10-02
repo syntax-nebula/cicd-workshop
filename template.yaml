@@ -16,3 +16,8 @@ Resources:
       FunctionName: cicd-workshop-order-api
       CodeUri: ./src/order-api/
       Handler: index.handler
+
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: cicd-workshop-bus
