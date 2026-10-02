@@ -6,7 +6,7 @@ Globals:
   Function:
     Runtime: nodejs22.x
     Architectures: [arm64]      # the lab host is ARM, so sam local runs the ARM image natively
-    Timeout: 10
+    Timeout: 30
     MemorySize: 512
 
 Resources:
