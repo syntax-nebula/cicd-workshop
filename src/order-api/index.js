@@ -29,7 +29,10 @@ export const handler = async (event) => {
   const order = JSON.parse(event.body ?? '{}');
   const { valid, errors } = validateOrder(order);
   if (!valid) {
-    return { statusCode: 400, body: JSON.stringify({ errors }) };
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ errors, apiVersion: 'v2' }),
+    };
   }
 
   // Resolve the credential at runtime. Never log it.
