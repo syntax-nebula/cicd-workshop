@@ -20,3 +20,7 @@ export const handler = async (event) => {
     body: JSON.stringify({ orderId: 'placeholder', total: calculateTotal(order.items) }),
   };
 };
+
+export function isHighValue(order) {
+  return calculateTotal(order.items ?? []) > 1000;
+}
