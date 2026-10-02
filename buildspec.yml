@@ -1,5 +1,11 @@
 version: 0.2
 
+env:
+  parameter-store:
+    ARTIFACT_BUCKET: /cicd-workshop/artifact-bucket
+  secrets-manager:
+    NPM_TOKEN: cicd-workshop/npm:token
+
 phases:
   install:
     runtime-versions:
