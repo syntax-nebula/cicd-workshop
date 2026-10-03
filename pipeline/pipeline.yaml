@@ -136,6 +136,9 @@ Resources:
               - Effect: Allow
                 Action: iam:PassRole
                 Resource: !GetAtt CfnDeployRole.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref ApprovalTopic
 
   VerifyProject:
     Type: AWS::CodeBuild::Project
@@ -187,6 +190,12 @@ Resources:
               - Effect: Allow
                 Action: [sqs:ReceiveMessage, sqs:GetQueueUrl, sqs:GetQueueAttributes]
                 Resource: !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${ProjectName}-*'
+
+  ApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-approvals'
+      DisplayName: CI/CD workshop production approvals
 
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -260,6 +269,21 @@ Resources:
                 ProjectName: !Ref VerifyProject
                 EnvironmentVariables: '[{"name":"TARGET_ENVIRONMENT","value":"staging"}]'
               RunOrder: 2
+
+        - Name: ApproveProd
+          Actions:
+            - Name: ApproveProdDeployment
+              ActionTypeId: { Category: Approval, Owner: AWS, Provider: Manual, Version: '1' }
+              Configuration:
+                NotificationArn: !Ref ApprovalTopic
+                ExternalEntityLink: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudformation/home?region=${AWS::Region}#/stacks/stackinfo?stackId=${ProjectName}-staging'
+                CustomData: >-
+                  Before approving, confirm ALL of the following:
+                  (1) the staging change set shows no Replacement:True on a stateful resource;
+                  (2) VerifyStaging passed - the synthetic event reached the shipping queue;
+                  (3) if this touches the OrderPlaced schema, the expand/contract step is
+                  documented in docs/events.md and the consumer has already been migrated.
+              RunOrder: 1
 
         - Name: DeployProd
           Actions:
