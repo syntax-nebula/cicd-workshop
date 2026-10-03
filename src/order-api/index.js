@@ -58,11 +58,8 @@ export const handler = async (event) => {
       DetailType: 'OrderPlaced',
       EventBusName: process.env.EVENT_BUS_NAME,
       Detail: JSON.stringify({
-        schemaVersion: '1.1',
+        schemaVersion: '2.0',
         orderId,
-        // DEPRECATED: `total` is replaced by `orderTotal`. Both are published
-        // during the migration window. Removal is tracked in docs/events.md.
-        total,
         orderTotal: total,
         highValue: isHighValue(order),
         correlationId: order.correlationId ?? orderId,
