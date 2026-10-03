@@ -5,7 +5,9 @@
 # Use it to join a lab after missing earlier ones, or to redo a lab from a clean start.
 # Your own work is kept: before anything changes, your current commit is tagged mine-before-lab<N>.
 #
-# Supported so far: goto 2 to 8. goto 5 to 8 only forwards; they need the earlier labs' stacks to exist. Later labs are added as each lab's checkpoint is proven.
+# Supported: goto 2 to 8, forwards and backwards. Going back to Lab 5 or earlier removes the pipeline
+# and the staging and prod stacks. goto 6 to 8 deploy the pipeline as the previous lab left it and
+# run it once.
 set -euo pipefail
 
 REPO=~/cicd-workshop
@@ -47,12 +49,20 @@ usage() { echo "usage: sn-lab.sh goto <N>   (supported: $SUPPORTED)"; exit 2; }
 # ---------------------------------------------------------------------------------------------
 cleanup_from() {
   local n=$1
-  if [ "$n" -le 5 ] && in_lab_account; then
-    for st in cicd-workshop-pipeline cicd-workshop-staging cicd-workshop-prod; do
-      aws cloudformation describe-stacks --stack-name "$st" >/dev/null 2>&1 \
-        && die "Lab 5's stack $st exists. Going back to Lab $n from Lab 5 or later is not supported by this jumper yet. Nothing was changed."
-    done
+  if [ "$n" -le 8 ] && in_lab_account; then
+    if aws cloudformation describe-stacks --stack-name cicd-workshop-tf-pipeline >/dev/null 2>&1 \
+       || aws s3api head-bucket --bucket "cicd-workshop-tfstate-$(aws sts get-caller-identity --query Account --output text)" >/dev/null 2>&1; then
+      die "Lab 8's Terraform resources exist. Run Lab 8's 'Clean up' section first, then run this again. Nothing was changed."
+    fi
   fi
+  if [ "$n" -le 6 ] && in_lab_account \
+     && aws cloudformation describe-stacks --stack-name cicd-workshop-stuck >/dev/null 2>&1; then
+    say "Removing Lab 6's practice stack"
+    gone aws cloudformation delete-stack --stack-name cicd-workshop-stuck
+    aws cloudformation wait stack-delete-complete --stack-name cicd-workshop-stuck \
+      || die "the stack cicd-workshop-stuck did not delete. Finish Lab 6 Task 6 ('Recover a stuck stack'), then run this again."
+  fi
+  if [ "$n" -le 5 ] && in_lab_account; then lab5_teardown; fi
   if [ "$n" -le 3 ]; then
     say "Removing what Lab 3 and later created"
     if in_lab_account; then
@@ -73,6 +83,60 @@ cleanup_from() {
       aws cloudformation wait stack-delete-complete --stack-name cicd-workshop-dev || true
     fi
     rm -f "$REPO/samconfig.toml"
+  fi
+}
+
+# Delete a stack if it exists, and wait. A stack the pipeline deployed is deleted with the pipeline's
+# deploy role, so the pipeline stack always goes last.
+delete_stack() {
+  aws cloudformation describe-stacks --stack-name "$1" >/dev/null 2>&1 || return 0
+  echo "deleting stack $1"
+  aws cloudformation delete-stack --stack-name "$1"
+  aws cloudformation wait stack-delete-complete --stack-name "$1" \
+    || die "the stack $1 did not delete. Look at its events in the CloudFormation console, then run this again."
+}
+
+# Every object version and delete marker: a versioned bucket must be empty before it can be deleted.
+empty_bucket() {
+  python3 - "$1" <<'PY'
+import json, subprocess, sys
+bucket = sys.argv[1]
+while True:
+    raw = subprocess.check_output(["aws", "s3api", "list-object-versions", "--bucket", bucket,
+                                   "--max-items", "1000", "--output", "json"]).strip()
+    page = json.loads(raw) if raw else {}
+    objs = [{"Key": o["Key"], "VersionId": o["VersionId"]}
+            for o in (page.get("Versions") or []) + (page.get("DeleteMarkers") or [])]
+    if not objs:
+        break
+    subprocess.check_call(["aws", "s3api", "delete-objects", "--bucket", bucket, "--delete",
+                           json.dumps({"Objects": objs, "Quiet": True})], stdout=subprocess.DEVNULL)
+PY
+}
+
+# Lab 5 and later: the staging and prod stacks, and the pipeline with its artifact bucket. The dev
+# stack goes too if the pipeline ever deployed it: it is tied to the pipeline's deploy role, which is
+# deleted with the pipeline. The jump deploys dev again from the checkpoint.
+lab5_teardown() {
+  local st role bucket found=""
+  for st in cicd-workshop-pipeline cicd-workshop-staging cicd-workshop-prod; do
+    if aws cloudformation describe-stacks --stack-name "$st" >/dev/null 2>&1; then found=1; fi
+  done
+  [ -n "$found" ] || return 0
+  say "Removing Lab 5's stacks and the pipeline (5 to 10 minutes)"
+  delete_stack cicd-workshop-prod
+  delete_stack cicd-workshop-staging
+  role=$(aws cloudformation describe-stacks --stack-name cicd-workshop-dev \
+    --query 'Stacks[0].RoleARN' --output text 2>/dev/null || true)
+  if [ -n "$role" ] && [ "$role" != None ]; then delete_stack cicd-workshop-dev; fi
+  if aws cloudformation describe-stacks --stack-name cicd-workshop-pipeline >/dev/null 2>&1; then
+    bucket=$(aws cloudformation describe-stacks --stack-name cicd-workshop-pipeline \
+      --query 'Stacks[0].Outputs[?OutputKey==`ArtifactBucket`].OutputValue' --output text)
+    if [ -n "$bucket" ] && [ "$bucket" != None ] && aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+      echo "emptying the artifact bucket $bucket"
+      empty_bucket "$bucket"
+    fi
+    delete_stack cicd-workshop-pipeline
   fi
 }
 
@@ -145,9 +209,7 @@ create_before() {
   # Lab 1 creates nothing in AWS.
   if [ "$n" -ge 3 ]; then lab2_left_behind "$n"; fi
   if [ "$n" -ge 4 ]; then lab3_left_behind; fi
-  if [ "$n" -ge 6 ]; then lab5_left_behind; fi
-  if [ "$n" -ge 7 ]; then lab6_left_behind; fi
-  if [ "$n" -ge 8 ]; then lab7_left_behind; fi
+  if [ "$n" -ge 6 ]; then pipeline_left_behind "$n"; fi
   if [ "$n" -ge 3 ] && [ "$n" -le 4 ]; then drop_lambda_versions; fi
 }
 
@@ -160,34 +222,78 @@ drop_lambda_versions() {
   done
 }
 
-# Lab 5: the three stage stacks and the pipeline. Building them from nothing is not supported yet;
-# a forward jump finds them where Lab 5 left them.
-lab5_left_behind() {
-  say "Lab 5: the stage stacks and the pipeline"
-  local st
-  for st in cicd-workshop-dev cicd-workshop-staging cicd-workshop-prod cicd-workshop-pipeline; do
-    aws cloudformation describe-stacks --stack-name "$st" >/dev/null 2>&1 \
-      || die "stack $st does not exist. Jumping to Lab 6 needs Lab 5's stacks, and creating them is not supported by this jumper yet."
-  done
-  echo "the stage stacks and the pipeline are in place"
-}
-
-# Lab 6: the verify stages in the pipeline (its scripts are in the project).
-lab6_left_behind() {
-  say "Lab 6: the verify stages"
-  aws codepipeline get-pipeline --name cicd-workshop-pipeline \
-    --query 'pipeline.stages[].actions[].name' --output text | grep -qw VerifyDev \
-    || die "the pipeline has no VerifyDev stage. Jumping to Lab 7 needs Lab 6's pipeline changes, and adding them is not supported by this jumper yet."
-  echo "the verify stages are in place"
-}
-
-# Lab 7: the manual approval before prod, in the pipeline stack.
-lab7_left_behind() {
-  say "Lab 7: the approval before prod"
-  aws codepipeline get-pipeline --name cicd-workshop-pipeline \
-    --query 'pipeline.stages[].name' --output text | grep -qw ApproveProd \
-    || die "the pipeline has no ApproveProd stage. Jumping to Lab 8 needs Lab 7's pipeline changes, and adding them is not supported by this jumper yet."
-  echo "the approval stage is in place"
+# Labs 5 to 7: the pipeline and the three stage stacks it deploys. The checkpoint holds the pipeline
+# as the previous lab left it (Lab 6 adds the verify stages, Lab 7 the approval gate). Deploy it,
+# publish the checkpoint, and let one run create or update dev, staging and prod, as Lab 5 Task 3
+# does. A Lab 7 pipeline stops at ApproveProd: the jumper approves that run itself.
+pipeline_left_behind() {
+  local n=$1 bucket since
+  local labs="Lab 5"
+  if [ "$n" -gt 6 ]; then labs="Labs 5 to $((n - 1))"; fi
+  say "$labs: the pipeline, and one run of it (5 to 20 minutes)"
+  cd "$REPO"
+  aws cloudformation deploy --template-file pipeline/pipeline.yaml --stack-name cicd-workshop-pipeline \
+    --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset >/tmp/sn-lab-pipeline.log 2>&1 \
+    || { tail -20 /tmp/sn-lab-pipeline.log; die "the pipeline stack did not deploy"; }
+  bucket=$(aws cloudformation describe-stacks --stack-name cicd-workshop-pipeline \
+    --query 'Stacks[0].Outputs[?OutputKey==`ArtifactBucket`].OutputValue' --output text)
+  aws ssm put-parameter --name /cicd-workshop/artifact-bucket --value "$bucket" \
+    --type String --overwrite >/dev/null
+  since=$(date -u +%s)
+  ./scripts-publish.sh
+  version=$(aws s3api head-object --bucket "$bucket" --key source/source.zip --query VersionId --output text)
+  python3 - "$since" "$n" "$version" <<'PY' || die "the pipeline run did not succeed. Run: aws codepipeline get-pipeline-state --name cicd-workshop-pipeline"
+import datetime, json, subprocess, sys, time
+P = "cicd-workshop-pipeline"
+def aws(*args):
+    return json.loads(subprocess.check_output(["aws", *args, "--output", "json"]))
+since = datetime.datetime.fromtimestamp(int(sys.argv[1]) - 10, datetime.timezone.utc)
+start = time.time()
+run = None
+print("waiting for the pipeline run to start ...", flush=True)
+while run is None:
+    if time.time() - start > 600:
+        sys.exit("no pipeline run started within 10 minutes of the publish")
+    time.sleep(15)
+    runs = aws("codepipeline", "list-pipeline-executions", "--pipeline-name", P,
+               "--max-items", "10")["pipelineExecutionSummaries"]
+    # the run of this publish: its source revision is the S3 version just uploaded
+    mine = [r for r in runs if any(v.get("revisionId") == sys.argv[3] for v in r.get("sourceRevisions", []))]
+    if not mine:   # no revision listed yet: the first run that started after the publish
+        mine = [r for r in runs if not r.get("sourceRevisions")
+                and datetime.datetime.fromisoformat(r["startTime"]) >= since]
+    run = mine[-1]["pipelineExecutionId"] if mine else None
+print("run", run, "started", flush=True)
+shown = set()
+while True:
+    if time.time() - start > 3600:
+        sys.exit("the pipeline run took more than an hour")
+    time.sleep(20)
+    status = aws("codepipeline", "get-pipeline-execution", "--pipeline-name", P,
+                 "--pipeline-execution-id", run)["pipelineExecution"]["status"]
+    for st in aws("codepipeline", "get-pipeline-state", "--name", P)["stageStates"]:
+        le = st.get("latestExecution", {})
+        if le.get("pipelineExecutionId") != run:
+            continue
+        if (st["stageName"], le["status"]) not in shown:
+            shown.add((st["stageName"], le["status"]))
+            print("  ", st["stageName"], le["status"], flush=True)
+        for act in st.get("actionStates", []):
+            ae = act.get("latestExecution", {})
+            if ae.get("status") == "InProgress" and ae.get("token"):
+                result = json.dumps({"summary": "Approved by sn-lab.sh goto " + sys.argv[2] +
+                                                " to set up the lab", "status": "Approved"})
+                subprocess.check_call(["aws", "codepipeline", "put-approval-result", "--pipeline-name", P,
+                                       "--stage-name", st["stageName"], "--action-name", act["actionName"],
+                                       "--token", ae["token"], "--result", result],
+                                      stdout=subprocess.DEVNULL)
+                print("   approved", act["actionName"], flush=True)
+    if status == "Succeeded":
+        print("the pipeline run succeeded: dev, staging and prod are deployed", flush=True)
+        break
+    if status not in ("InProgress",):
+        sys.exit("the pipeline run ended " + status)
+PY
 }
 
 # Lab 3: the scanners, the payment secret at its last value, the build's parameter and npm token,
@@ -235,7 +341,7 @@ Do Lab 2, Task 4, 'Configure credentials': create an access key and run aws conf
   cd "$REPO"
   npm ci --silent
   # From Lab 6 on, the pipeline deploys the stacks and samconfig.toml is part of the project:
-  # a guided deploy here would rewrite a tracked file. lab5_left_behind checks the stacks instead.
+  # a guided deploy here would rewrite a tracked file. pipeline_left_behind deploys them instead.
   [ "${1:-3}" -ge 6 ] && return 0
   sam build >/tmp/sn-lab-build.log 2>&1 || { tail -20 /tmp/sn-lab-build.log; die "sam build failed"; }
   # The guided deploy, answered as Lab 2's table says: Enter five times, y for the API with no
