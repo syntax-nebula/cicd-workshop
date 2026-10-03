@@ -31,7 +31,7 @@ Every event published on `cicd-workshop-<env>-bus` is documented here.
 
 | Consumer | Owner | Fields read | Migrated to 1.1? |
 | --- | --- | --- | --- |
-| `fulfilment` | Fulfilment team | `orderId`, `correlationId`, `highValue` | **No — pending** |
+| `fulfilment` | Fulfilment team | `orderId`, `correlationId`, `highValue`, `orderTotal` | **Yes** (tolerant: falls back to `total`) |
 
 ### Deprecations in flight
 
