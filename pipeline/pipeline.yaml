@@ -125,7 +125,7 @@ Resources:
                   - !Sub '${ArtifactBucket.Arn}/*'
               - Effect: Allow
                 Action: [codebuild:StartBuild, codebuild:BatchGetBuilds]
-                Resource: !GetAtt BuildProject.Arn
+                Resource: [!GetAtt BuildProject.Arn, !GetAtt VerifyProject.Arn]
               - Effect: Allow
                 Action: [cloudformation:CreateStack, cloudformation:UpdateStack,
                          cloudformation:DescribeStacks, cloudformation:DescribeStackEvents,
@@ -136,6 +136,57 @@ Resources:
               - Effect: Allow
                 Action: iam:PassRole
                 Resource: !GetAtt CfnDeployRole.Arn
+
+  VerifyProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-verify'
+      ServiceRole: !GetAtt VerifyRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      TimeoutInMinutes: 10
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - chmod +x scripts-verify-flow.sh
+                - ./scripts-verify-flow.sh "$TARGET_ENVIRONMENT" 120
+
+  VerifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VerifyPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject]
+                Resource: !Sub '${ArtifactBucket.Arn}/*'
+              - Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}-*/*'
+              - Effect: Allow
+                Action: events:PutEvents
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/${ProjectName}-*'
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:GetQueueUrl, sqs:GetQueueAttributes]
+                Resource: !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${ProjectName}-*'
 
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -181,6 +232,13 @@ Resources:
                 RoleArn: !GetAtt CfnDeployRole.Arn
                 ParameterOverrides: '{"Environment":"dev","LogLevel":"DEBUG"}'
               RunOrder: 1
+            - Name: VerifyDev
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              InputArtifacts: [{ Name: BuildOutput }]
+              Configuration:
+                ProjectName: !Ref VerifyProject
+                EnvironmentVariables: '[{"name":"TARGET_ENVIRONMENT","value":"dev"}]'
+              RunOrder: 2
 
         - Name: DeployStaging
           Actions:
@@ -195,6 +253,13 @@ Resources:
                 RoleArn: !GetAtt CfnDeployRole.Arn
                 ParameterOverrides: '{"Environment":"staging","LogLevel":"INFO"}'
               RunOrder: 1
+            - Name: VerifyStaging
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              InputArtifacts: [{ Name: BuildOutput }]
+              Configuration:
+                ProjectName: !Ref VerifyProject
+                EnvironmentVariables: '[{"name":"TARGET_ENVIRONMENT","value":"staging"}]'
+              RunOrder: 2
 
         - Name: DeployProd
           Actions:
@@ -209,6 +274,13 @@ Resources:
                 RoleArn: !GetAtt CfnDeployRole.Arn
                 ParameterOverrides: '{"Environment":"prod","LogLevel":"WARN"}'
               RunOrder: 1
+            - Name: VerifyProd
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              InputArtifacts: [{ Name: BuildOutput }]
+              Configuration:
+                ProjectName: !Ref VerifyProject
+                EnvironmentVariables: '[{"name":"TARGET_ENVIRONMENT","value":"prod"}]'
+              RunOrder: 2
 
 Outputs:
   ArtifactBucket:

@@ -43,6 +43,7 @@ artifacts:
     - test/**/*
     - package.json
     - package-lock.json
+    - scripts-verify-flow.sh
 
 cache:
   paths:
