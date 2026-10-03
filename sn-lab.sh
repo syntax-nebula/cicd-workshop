@@ -94,7 +94,7 @@ project_to() {
   git config --global core.editor nano
 
   if [ -d "$REPO/.git" ]; then
-    if git -C "$REPO" rev-parse -q --verify HEAD >/dev/null; then
+    if git -C "$REPO" rev-parse -q --verify HEAD >/dev/null        && ! { git -C "$REPO" tag --points-at HEAD | grep -q '^lab[0-9]*-done$'               && [ -z "$(git -C "$REPO" status --porcelain)" ]; }; then   # nothing of yours to keep on a bare checkpoint
       local keep="mine-before-lab$n" i=2
       while git -C "$REPO" rev-parse -q --verify "refs/tags/$keep" >/dev/null; do keep="mine-before-lab$n-$i"; i=$((i + 1)); done
       git -C "$REPO" tag "$keep" HEAD                      # never moves an earlier copy
@@ -241,7 +241,8 @@ Do Lab 2, Task 4, 'Configure credentials': create an access key and run aws conf
   # The guided deploy, answered as Lab 2's table says: Enter five times, y for the API with no
   # authentication, Enter three times. It writes samconfig.toml exactly as Lab 2 does.
   printf '\n\n\n\n\ny\n\n\n\n' | sam deploy --guided --stack-name cicd-workshop-dev \
-    --capabilities CAPABILITY_IAM --resolve-s3 --region eu-central-1 --no-fail-on-empty-changeset \n    >/tmp/sn-lab-deploy.log 2>&1 || { tail -20 /tmp/sn-lab-deploy.log; die "sam deploy failed"; }
+    --capabilities CAPABILITY_IAM --resolve-s3 --region eu-central-1 --no-fail-on-empty-changeset \
+    >/tmp/sn-lab-deploy.log 2>&1 || { tail -20 /tmp/sn-lab-deploy.log; die "sam deploy failed"; }
   aws cloudformation describe-stacks --stack-name cicd-workshop-dev --query 'Stacks[0].StackStatus' --output text
 }
 
@@ -277,6 +278,16 @@ read -r -p "Type 'go' to continue: " ok
 
 # Nothing changes until the checkpoint is known to exist.
 TAG="${SN_CHECKPOINT_TAG:-lab$((N - 1))-done}"   # SN_CHECKPOINT_TAG: start from another checkpoint tag
+# Git first: a student who skipped Lab 1 has none, and the checkpoint check below needs it.
+command -v git >/dev/null || { echo "installing Git (Lab 1)"; sudo dnf install -y -q git; }
+# From Lab 3 on the jumper deploys with the LabUser key; stop now, before anything is changed.
+if [ "$N" -ge 3 ]; then
+  case "$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || true)" in
+    *:user/LabUser) ;;
+    *) die "AWS is not set up with your LabUser access key yet.
+Do Lab 2, Task 4, 'Configure credentials': create an access key and run aws configure. Then run this again. Nothing was changed." ;;
+  esac
+fi
 cgit ls-remote --tags "$CHECKPOINTS_URL" "refs/tags/$TAG" 2>/dev/null | grep -q .   || die "checkpoint $TAG is not available yet at $CHECKPOINTS_URL. Nothing was changed."
 
 cleanup_from "$N"
