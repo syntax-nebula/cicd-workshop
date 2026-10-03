@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { getPaymentSecret } from './secrets.js';
+import { getPaymentSecret } from './secrets-helper.js';
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 
