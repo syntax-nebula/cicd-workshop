@@ -1,0 +1,26 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - yum install -y yum-utils
+      - yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+      - yum -y install terraform
+      - terraform version
+
+  build:
+    commands:
+      - cd terraform
+      - terraform init -input=false -backend-config="bucket=${TF_STATE_BUCKET}"
+      - terraform fmt -check
+      - terraform validate
+      # -detailed-exitcode: 0 = no changes, 2 = changes, 1 = error
+      - terraform plan -input=false -lock-timeout=5m -out=tfplan -detailed-exitcode || [ $? -eq 2 ]
+      # A human-readable copy for the approver, and a machine-readable one for scanning.
+      - terraform show -no-color tfplan > tfplan.txt
+      - terraform show -json    tfplan > tfplan.json
+      - cat tfplan.txt
+
+artifacts:
+  files:
+    - terraform/**/*

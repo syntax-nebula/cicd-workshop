@@ -1,0 +1,18 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - yum install -y yum-utils
+      - yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+      - yum -y install terraform
+
+  build:
+    commands:
+      - cd terraform
+      - terraform init -input=false -backend-config="bucket=${TF_STATE_BUCKET}"
+      # Applies the reviewed plan. If the world moved, this FAILS rather than
+      # silently doing something the approver never saw.
+      - terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+      - terraform output -json > outputs.json
+      - cat outputs.json
