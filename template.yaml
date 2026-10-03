@@ -171,7 +171,7 @@ Resources:
         Variables:
           PAYMENT_SECRET_ID: cicd-workshop/payment-api
       Policies:
-        - DynamoDBReadPolicy:
+        - DynamoDBWritePolicy:
             TableName: !Ref OrdersTable
         - EventBridgePutEventsPolicy:
             EventBusName: !Ref EventBus
