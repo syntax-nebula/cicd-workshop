@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CI/CD workshop - standalone Terraform pipeline (Lab 8)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: cicd-workshop-tf
+  StateBucket:
+    Type: String
+
+Resources:
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-artifacts-${AWS::AccountId}'
+      VersioningConfiguration: { Status: Enabled }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+
+  ApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-approvals'
+
+  TerraformRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Workshop only. Scope this to the resource types Terraform manages.
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: TerraformNeeds
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:ListBucket, s3:GetBucketLocation]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+              # The state bucket. Note DeleteObject - that is the lock file.
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !Sub 'arn:aws:s3:::${StateBucket}'
+                  - !Sub 'arn:aws:s3:::${StateBucket}/*'
+              - Effect: Allow
+                Action: [iam:CreateRole, iam:DeleteRole, iam:GetRole, iam:PassRole, iam:TagRole,
+                         iam:PutRolePolicy, iam:DeleteRolePolicy, iam:GetRolePolicy,
+                         iam:AttachRolePolicy, iam:DetachRolePolicy, iam:ListRolePolicies,
+                         iam:ListAttachedRolePolicies]
+                Resource: '*'
+
+  PlanProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-plan'
+      ServiceRole: !GetAtt TerraformRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      TimeoutInMinutes: 20
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: TF_STATE_BUCKET
+            Value: !Ref StateBucket
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: terraform/buildspec-plan.yml
+
+  ApplyProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-apply'
+      ServiceRole: !GetAtt TerraformRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      TimeoutInMinutes: 30
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: TF_STATE_BUCKET
+            Value: !Ref StateBucket
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: terraform/buildspec-apply.yml
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codepipeline.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:GetBucketVersioning, s3:ListBucket]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+              - Effect: Allow
+                Action: [codebuild:StartBuild, codebuild:BatchGetBuilds]
+                Resource:
+                  - !GetAtt PlanProject.Arn
+                  - !GetAtt ApplyProject.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref ApprovalTopic
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${ProjectName}-pipeline'
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+
+        - Name: Source
+          Actions:
+            - Name: SourceZip
+              ActionTypeId: { Category: Source, Owner: AWS, Provider: S3, Version: '1' }
+              OutputArtifacts: [{ Name: SourceOutput }]
+              Configuration:
+                S3Bucket: !Ref ArtifactBucket
+                S3ObjectKey: source/source.zip
+                PollForSourceChanges: true
+              RunOrder: 1
+
+        - Name: Plan
+          Actions:
+            - Name: TerraformPlan
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              InputArtifacts: [{ Name: SourceOutput }]
+              OutputArtifacts: [{ Name: PlanOutput }]
+              Configuration: { ProjectName: !Ref PlanProject }
+              RunOrder: 1
+
+        - Name: Approve
+          Actions:
+            - Name: ApproveThePlan
+              ActionTypeId: { Category: Approval, Owner: AWS, Provider: Manual, Version: '1' }
+              Configuration:
+                NotificationArn: !Ref ApprovalTopic
+                CustomData: >-
+                  Read terraform/tfplan.txt in the Plan build log before approving.
+                  Check specifically for lines containing "must be replaced" or
+                  "forces replacement" on the DynamoDB table or the SQS queues.
+                  Apply will execute THIS plan and nothing else.
+              RunOrder: 1
+
+        - Name: Apply
+          Actions:
+            - Name: TerraformApply
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              InputArtifacts: [{ Name: PlanOutput }]
+              Configuration: { ProjectName: !Ref ApplyProject }
+              RunOrder: 1
+
+Outputs:
+  ArtifactBucket:
+    Value: !Ref ArtifactBucket
+  PipelineName:
+    Value: !Ref Pipeline
