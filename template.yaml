@@ -210,7 +210,7 @@ Resources:
               source:
                 - cicd-workshop.orders
               detail-type:
-                - OrderPlaced
+                - OrderPlaced.v2
 
   OrderApiLogGroup:
     Type: AWS::Logs::LogGroup
