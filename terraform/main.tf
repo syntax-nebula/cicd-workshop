@@ -119,7 +119,7 @@ resource "aws_lambda_function" "order_api" {
   handler       = "index.handler"
   runtime       = "nodejs22.x"
   timeout       = 30
-  memory_size   = 256
+  memory_size   = 512
   publish       = true
 
   filename         = data.archive_file.order_api.output_path
