@@ -48,9 +48,9 @@ test('stores the order and publishes OrderPlaced', async () => {
   expect(entry.Source).toBe('cicd-workshop.orders');
 
   const detail = JSON.parse(entry.Detail);
-  expect(detail.schemaVersion).toBe('1.1');
-  // Expand phase: BOTH names must be present until every consumer has migrated.
-  expect(detail.total).toBe(20);
+  expect(detail.schemaVersion).toBe('2.0');
+  // Contract phase: the deprecated field is gone.
+  expect(detail.total).toBeUndefined();
   expect(detail.orderTotal).toBe(20);
   expect(detail.highValue).toBe(false);
 });

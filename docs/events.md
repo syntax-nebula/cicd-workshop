@@ -12,20 +12,27 @@ Every event published on `cicd-workshop-<env>-bus` is documented here.
 | Source | `cicd-workshop.orders` |
 | Detail type | `OrderPlaced` |
 | Producer | `order-api` |
-| Current schema version | 1.1 |
+| Current schema version | 2.0 |
 
-### Schema 1.1
+### Schema 2.0
 
 ```json
 {
-  "schemaVersion": "1.1",
+  "schemaVersion": "2.0",
   "orderId": "string (uuid)",
-  "total": "number       // DEPRECATED - use orderTotal",
   "orderTotal": "number",
   "highValue": "boolean",
   "correlationId": "string"
 }
 ```
+
+### Schema history
+
+| Version | Change | Released |
+| --- | --- | --- |
+| 1.0 | Initial | day 1 |
+| 1.1 | Added `orderTotal`; deprecated `total` (expand) | day 3 |
+| 2.0 | Removed `total` (contract) | day 3 |
 
 ### Known consumers
 
@@ -35,9 +42,7 @@ Every event published on `cicd-workshop-<env>-bus` is documented here.
 
 ### Deprecations in flight
 
-| Field | Replaced by | Deprecated in | Removal blocked until |
-| --- | --- | --- | --- |
-| `total` | `orderTotal` | 1.1 | every consumer in the table above reads `orderTotal` |
+_None. The `total` -> `orderTotal` migration completed in 2.0._
 
 ---
 
