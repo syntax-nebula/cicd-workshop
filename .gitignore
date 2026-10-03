@@ -3,3 +3,11 @@ node_modules/
 *.zip
 .env
 coverage/
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/tfplan
+terraform/*.zip
