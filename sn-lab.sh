@@ -51,7 +51,8 @@ cleanup_from() {
   local n=$1
   if in_lab_account; then clear_leftovers; fi
   if [ "$n" -le 8 ] && in_lab_account; then
-    if aws cloudformation describe-stacks --stack-name cicd-workshop-tf-pipeline >/dev/null 2>&1 \
+    if aws codepipeline get-pipeline --name cicd-workshop-tf-pipeline >/dev/null 2>&1 \
+       || aws cloudformation describe-stacks --stack-name cicd-workshop-tf-pipeline >/dev/null 2>&1 \
        || aws s3api head-bucket --bucket "cicd-workshop-tfstate-$(aws sts get-caller-identity --query Account --output text)" >/dev/null 2>&1; then
       die "Lab 8's Terraform resources exist. Run Lab 8's 'Clean up' section first, then run this again. Nothing was changed."
     fi
@@ -335,7 +336,8 @@ PY
 lab3_left_behind() {
   say "Lab 3: scanners, secrets, parameter and the pre-commit hook"
   command -v pip3 >/dev/null || sudo dnf install -y -q python3-pip
-  [ -x "$HOME/.local/bin/checkov" ] || pip3 install --user --quiet cfn-lint checkov   # ~/.local/bin is on PATH only in interactive shells
+  # pip's resolver warns on stderr about the AWS CLI's own jmespath; harmless, so the log is shown only if pip fails
+  [ -x "$HOME/.local/bin/checkov" ] || pip3 install --user --quiet cfn-lint checkov 2>/tmp/sn-lab-pip.log     || { cat /tmp/sn-lab-pip.log; die "installing cfn-lint and checkov failed"; }   # ~/.local/bin is on PATH only in interactive shells
   local payment='{"apiKey":"sk_test_FAKE_ROTATED_AGAIN_x9y8z7","endpoint":"https://payments-v2.example.invalid"}'
   if aws secretsmanager describe-secret --secret-id cicd-workshop/payment-api >/dev/null 2>&1; then
     aws secretsmanager put-secret-value --secret-id cicd-workshop/payment-api --secret-string "$payment" >/dev/null
@@ -418,8 +420,6 @@ read -r -p "Type 'go' to continue: " ok
 
 # Nothing changes until the checkpoint is known to exist.
 TAG="${SN_CHECKPOINT_TAG:-lab$((N - 1))-done}"   # SN_CHECKPOINT_TAG: start from another checkpoint tag
-# Git first: a student who skipped Lab 1 has none, and the checkpoint check below needs it.
-command -v git >/dev/null || { echo "installing Git (Lab 1)"; sudo dnf install -y -q git; }
 # From Lab 3 on the jumper deploys with the LabUser key; stop now, before anything is changed.
 if [ "$N" -ge 3 ]; then
   case "$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || true)" in
@@ -428,6 +428,8 @@ if [ "$N" -ge 3 ]; then
 Do Lab 2, Task 4, 'Configure credentials': create an access key and run aws configure. Then run this again. Nothing was changed." ;;
   esac
 fi
+# Then Git: a student who skipped Lab 1 has none, and the checkpoint check below needs it.
+command -v git >/dev/null || { echo "installing Git (Lab 1)"; sudo dnf install -y -q git; }
 cgit ls-remote --tags "$CHECKPOINTS_URL" "refs/tags/$TAG" 2>/dev/null | grep -q .   || die "checkpoint $TAG is not available yet at $CHECKPOINTS_URL. Nothing was changed."
 
 cleanup_from "$N"
