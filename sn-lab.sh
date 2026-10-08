@@ -49,7 +49,7 @@ usage() { echo "usage: sn-lab.sh goto <N>   (supported: $SUPPORTED)"; exit 2; }
 # ---------------------------------------------------------------------------------------------
 cleanup_from() {
   local n=$1
-  if in_lab_account; then finish_failed_deletes; fi
+  if in_lab_account; then clear_leftovers; fi
   if [ "$n" -le 8 ] && in_lab_account; then
     if aws cloudformation describe-stacks --stack-name cicd-workshop-tf-pipeline >/dev/null 2>&1 \
        || aws s3api head-bucket --bucket "cicd-workshop-tfstate-$(aws sts get-caller-identity --query Account --output text)" >/dev/null 2>&1; then
@@ -141,16 +141,20 @@ lab5_teardown() {
   fi
 }
 
-# A stack that an earlier clean-up left in DELETE_FAILED can be neither updated nor deployed over
-# (Lab 7's old clean-up did this: it could not empty the versioned artifact bucket). Delete it again:
-# the application stacks before the pipeline, whose artifact bucket is emptied of every version first.
-finish_failed_deletes() {
-  local st status bucket
+# What an earlier clean-up or a failed jump left behind, which no stack can be created or deployed over:
+# - a stack in DELETE_FAILED (Lab 7's old clean-up could not empty the versioned artifact bucket) or
+#   in ROLLBACK_COMPLETE (a create that failed), which can only be deleted. The application stacks go
+#   before the pipeline, whose artifact bucket is emptied of every version first;
+# - a function's log group with no stack around it. Lambda creates the group itself when the template
+#   does not declare it, and a stack delete leaves such a group; CloudFormation then refuses to create
+#   a stack that declares the same name (its name-conflict validation).
+clear_leftovers() {
+  local st status bucket env fn
   for st in cicd-workshop-prod cicd-workshop-staging cicd-workshop-dev cicd-workshop-pipeline; do
     status=$(aws cloudformation describe-stacks --stack-name "$st" \
       --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
-    [ "$status" = DELETE_FAILED ] || continue
-    say "Finishing the delete of $st, which an earlier clean-up left half done"
+    case "$status" in DELETE_FAILED|ROLLBACK_COMPLETE) ;; *) continue ;; esac
+    say "Removing $st, which an earlier clean-up or jump left $status"
     if [ "$st" = cicd-workshop-pipeline ]; then
       bucket="cicd-workshop-artifacts-$(aws sts get-caller-identity --query Account --output text)"
       if aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
@@ -159,6 +163,14 @@ finish_failed_deletes() {
       fi
     fi
     delete_stack "$st"
+  done
+  for env in dev staging prod; do
+    aws cloudformation describe-stacks --stack-name "cicd-workshop-$env" >/dev/null 2>&1 && continue
+    for fn in order-api fulfilment; do
+      if aws logs delete-log-group --log-group-name "/aws/lambda/cicd-workshop-$env-$fn" 2>/dev/null; then
+        echo "deleted the log group /aws/lambda/cicd-workshop-$env-$fn, which had no stack"
+      fi
+    done
   done
 }
 
