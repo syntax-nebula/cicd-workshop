@@ -49,6 +49,7 @@ usage() { echo "usage: sn-lab.sh goto <N>   (supported: $SUPPORTED)"; exit 2; }
 # ---------------------------------------------------------------------------------------------
 cleanup_from() {
   local n=$1
+  if in_lab_account; then finish_failed_deletes; fi
   if [ "$n" -le 8 ] && in_lab_account; then
     if aws cloudformation describe-stacks --stack-name cicd-workshop-tf-pipeline >/dev/null 2>&1 \
        || aws s3api head-bucket --bucket "cicd-workshop-tfstate-$(aws sts get-caller-identity --query Account --output text)" >/dev/null 2>&1; then
@@ -138,6 +139,27 @@ lab5_teardown() {
     fi
     delete_stack cicd-workshop-pipeline
   fi
+}
+
+# A stack that an earlier clean-up left in DELETE_FAILED can be neither updated nor deployed over
+# (Lab 7's old clean-up did this: it could not empty the versioned artifact bucket). Delete it again:
+# the application stacks before the pipeline, whose artifact bucket is emptied of every version first.
+finish_failed_deletes() {
+  local st status bucket
+  for st in cicd-workshop-prod cicd-workshop-staging cicd-workshop-dev cicd-workshop-pipeline; do
+    status=$(aws cloudformation describe-stacks --stack-name "$st" \
+      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
+    [ "$status" = DELETE_FAILED ] || continue
+    say "Finishing the delete of $st, which an earlier clean-up left half done"
+    if [ "$st" = cicd-workshop-pipeline ]; then
+      bucket="cicd-workshop-artifacts-$(aws sts get-caller-identity --query Account --output text)"
+      if aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+        echo "emptying the artifact bucket $bucket"
+        empty_bucket "$bucket"
+      fi
+    fi
+    delete_stack "$st"
+  done
 }
 
 # ---------------------------------------------------------------------------------------------
